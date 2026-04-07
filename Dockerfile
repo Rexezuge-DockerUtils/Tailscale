@@ -1,45 +1,27 @@
-# ---- Build stage ----
-FROM golang:1.21-alpine AS builder
+FROM golang:alpine AS builder
 
-# 安装构建依赖
-RUN apk add --no-cache \
-    git \
-    musl-dev \
-    gcc \
-    linux-headers
+ARG TARGETARCH
 
-# 设置源码路径
+RUN apk add --no-cache git
+
+RUN LATEST_TAG=$(wget -qO- "https://api.github.com/repos/tailscale/tailscale/releases/latest" \
+    | grep -m1 '"tag_name"' | cut -d'"' -f4) && \
+    git clone --depth 1 --branch "${LATEST_TAG}" https://github.com/tailscale/tailscale.git /src && \
+    echo "${LATEST_TAG}" > /src/.version_tag
+
 WORKDIR /src
 
-# 获取 Tailscale 最新源码
-RUN git clone https://github.com/tailscale/tailscale.git .
+RUN VERSION_TAG=$(cat .version_tag) && \
+    VERSION_SHORT="${VERSION_TAG#v}" && \
+    VERSION_LONG="${VERSION_SHORT}-t$(git rev-parse --short HEAD)" && \
+    CGO_ENABLED=0 GOARCH=${TARGETARCH} go build -o /out/tailscale \
+      -ldflags "-s -w -extldflags '-static' -X tailscale.com/version.longStamp=${VERSION_LONG} -X tailscale.com/version.shortStamp=${VERSION_SHORT}" \
+      ./cmd/tailscale && \
+    CGO_ENABLED=0 GOARCH=${TARGETARCH} go build -o /out/tailscaled \
+      -ldflags "-s -w -extldflags '-static' -X tailscale.com/version.longStamp=${VERSION_LONG} -X tailscale.com/version.shortStamp=${VERSION_SHORT}" \
+      ./cmd/tailscaled
 
-# 切换到最新 commit（默认已在主分支）
-# 如果需要指定某个 commit，可以取消下面一行注释并修改
-# RUN git checkout <your-desired-commit-hash>
-
-# 设置 Go 环境
-ENV CGO_ENABLED=0
-ENV GOOS=linux
-ENV GOARCH=amd64
-
-# 拉取依赖并构建
-RUN go mod download
-
-# 编译静态二进制
-RUN go build -trimpath -ldflags="-s -w" -o /tailscaled ./cmd/tailscaled
-
-# ---- Final stage ----
-FROM alpine:latest
-
-# 拷贝静态二进制
-COPY --from=builder /tailscaled /usr/local/bin/tailscaled
-
-# 可选：如果需要 tailscale CLI 一起打包
-# COPY --from=builder /src/cmd/tailscale/tailscale /usr/local/bin/tailscale
-
-# 运行用户
-USER nobody:nobody
-
+FROM scratch
+COPY --from=builder /out/tailscale /usr/local/bin/tailscale
+COPY --from=builder /out/tailscaled /usr/local/bin/tailscaled
 ENTRYPOINT ["/usr/local/bin/tailscaled"]
-CMD ["--help"]
