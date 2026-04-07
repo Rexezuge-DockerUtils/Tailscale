@@ -22,6 +22,9 @@ RUN VERSION_TAG=$(cat .version_tag) && \
       ./cmd/tailscaled
 
 FROM scratch
-COPY --from=builder /out/tailscale /usr/local/bin/tailscale
-COPY --from=builder /out/tailscaled /usr/local/bin/tailscaled
-ENTRYPOINT ["/usr/local/bin/tailscaled"]
+
+COPY --from=builder /out/tailscaled /usr/sbin/tailscaled
+
+COPY --from=builder /out/tailscale /usr/bin/tailscale
+
+ENTRYPOINT ["/usr/sbin/tailscaled"]
